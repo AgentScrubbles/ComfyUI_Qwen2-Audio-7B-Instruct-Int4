@@ -108,7 +108,7 @@ class Qwen2_AQA:
                 inputs = self.processor(
                     text=text, audios=audios, return_tensors="pt", padding=True
                 )
-                inputs.input_ids = inputs.input_ids.to("cuda")
+                inputs = inputs.to("cuda")
 
                 generate_ids = self.model.generate(**inputs, max_length=256)
                 generate_ids = generate_ids[:, inputs.input_ids.size(1) :]
@@ -130,7 +130,7 @@ class Qwen2_AQA:
                 inputs = self.processor(
                     text=text, return_tensors="pt", padding=True
                 )
-                inputs.input_ids = inputs.input_ids.to("cuda")
+                inputs = inputs.to("cuda")
 
                 generate_ids = self.model.generate(**inputs, max_length=256)
                 generate_ids = generate_ids[:, inputs.input_ids.size(1) :]
