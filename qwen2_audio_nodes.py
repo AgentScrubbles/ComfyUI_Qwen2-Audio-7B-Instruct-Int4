@@ -1,7 +1,7 @@
 import os
 import torch
+import torchaudio
 import folder_paths
-import librosa
 from transformers import Qwen2AudioForConditionalGeneration, AutoProcessor
 
 
@@ -28,7 +28,7 @@ class Qwen2_AQA:
                 "seed": ("INT", {"default": -1}),  # add seed parameter, default is -1
             },
             "optional": {
-                "source_audio_path": ("PATH",),
+                "audio": ("AUDIO",),
             },
         }
 
@@ -42,7 +42,7 @@ class Qwen2_AQA:
         model,
         keep_model_loaded,
         seed=-1,  # add seed parameter, default is -1
-        source_audio_path=None,
+        audio=None,
     ):
         if seed != -1:
             torch.manual_seed(seed)
@@ -73,18 +73,35 @@ class Qwen2_AQA:
             )
 
         with torch.no_grad():
-            if source_audio_path:
-                print("source_audio_path:", source_audio_path)
-                
+            if audio is not None:
+                # Extract waveform and sample rate from AUDIO dict
+                waveform = audio["waveform"]
+                sample_rate = audio["sample_rate"]
+
+                # Remove batch dimension if present: (batch, channels, samples) -> (channels, samples)
+                if waveform.dim() == 3:
+                    waveform = waveform.squeeze(0)
+
+                # Convert to mono if stereo: (channels, samples) -> (samples,)
+                if waveform.dim() == 2 and waveform.shape[0] > 1:
+                    waveform = waveform.mean(dim=0)
+                elif waveform.dim() == 2:
+                    waveform = waveform.squeeze(0)
+
+                # Resample to processor's expected sample rate if needed
+                target_sr = self.processor.feature_extractor.sampling_rate
+                if sample_rate != target_sr:
+                    waveform = torchaudio.functional.resample(waveform, sample_rate, target_sr)
+
+                # Convert to numpy array (processor expects numpy)
+                audio_array = waveform.numpy()
+
                 conversation = [
                     {"role": "system", "content": "You are a helpful assistant."},
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "audio",
-                                "audio_url": source_audio_path,
-                            },
+                            {"type": "audio", "audio_url": "audio_input"},
                             {"type": "text", "text": text},
                         ],
                     },
@@ -92,21 +109,9 @@ class Qwen2_AQA:
                 text = self.processor.apply_chat_template(
                     conversation, add_generation_prompt=True, tokenize=False
                 )
-                audios = []
-
-                for message in conversation:
-                    if isinstance(message["content"], list):
-                        for ele in message["content"]:
-                            if ele["type"] == "audio":
-                                audios.append(
-                                    librosa.load(
-                                        ele["audio_url"],
-                                        sr=self.processor.feature_extractor.sampling_rate,
-                                    )[0]
-                                )
 
                 inputs = self.processor(
-                    text=text, audios=audios, return_tensors="pt", padding=True
+                    text=text, audios=[audio_array], return_tensors="pt", padding=True
                 )
                 inputs = inputs.to("cuda")
 
